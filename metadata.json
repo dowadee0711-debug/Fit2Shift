@@ -1,0 +1,8 @@
+{
+  "name": "Fit2Shift",
+  "description": "ระบบประเมินความพร้อมด้านความปลอดภัยก่อนเข้ากะภายใน 30 วินาที สำหรับพนักงานปฏิบัติงานเสี่ยงสูง เชื่อมต่อฐานข้อมูล Google Sheets",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
