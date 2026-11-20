@@ -11,9 +11,6 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
 const SHEETS_API_BASE = 'https://sheets.googleapis.com/v4/spreadsheets';
-const GMAIL_SEND_ENDPOINT = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
-const DEFAULT_ALERT_EMAIL =
-  process.env.ALERT_RECIPIENT_EMAIL?.trim() || 'nutthawadee.kae@dome.tu.ac.th';
 const DATA_DIR = path.resolve(__dirname, 'data');
 const RECORDS_FILE = path.join(DATA_DIR, 'fit2shift-records.json');
 
@@ -223,224 +220,12 @@ async function forwardToServerConfiguredSheet(record: StoredAssessment): Promise
   return false;
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function buildFailAlertEmailContent(
-  record: Pick<
-    StoredAssessment,
-    | 'timestamp'
-    | 'employeeId'
-    | 'employeeName'
-    | 'department'
-    | 'shift'
-    | 'sleepHours'
-    | 'avgReactionMs'
-    | 'fatigueScore'
-    | 'notes'
-  >,
-  recommendations: string[]
-): { subject: string; html: string } {
-  const subject = `[Fit2Shift แจ้งเตือนความปลอดภัย] พนักงาน ${record.employeeId} (${record.employeeName}) ไม่ผ่านเกณฑ์ความพร้อมก่อนเข้ากะ`;
-  const recItems =
-    recommendations.length > 0
-      ? recommendations
-          .map((item) => `<li style="margin-bottom:6px;">${escapeHtml(item)}</li>`)
-          .join('')
-      : '<li>งดเข้าปฏิบัติงานในพื้นที่เสี่ยงสูง และแจ้งหัวหน้างานทันที</li>';
-
-  const html = `
-    <div style="font-family: 'IBM Plex Sans Thai', Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 2px solid #0f172a; border-radius: 12px; overflow: hidden; background: #ffffff; color: #0f172a;">
-      <div style="background: #F38181; padding: 16px 20px; border-bottom: 2px solid #0f172a;">
-        <h2 style="margin: 0; font-size: 18px;">แจ้งเตือนสถานะความปลอดภัย: ไม่ผ่านเกณฑ์ (FAIL)</h2>
-        <p style="margin: 4px 0 0; font-size: 13px;">ระบบประเมินความพร้อมก่อนเข้ากะ Fit2Shift</p>
-      </div>
-      <div style="padding: 20px;">
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-          <tr><td style="padding: 6px 0; font-weight: bold;">รหัสพนักงาน:</td><td>${escapeHtml(record.employeeId)}</td></tr>
-          <tr><td style="padding: 6px 0; font-weight: bold;">ชื่อพนักงาน:</td><td>${escapeHtml(record.employeeName)}</td></tr>
-          <tr><td style="padding: 6px 0; font-weight: bold;">แผนก / กะ:</td><td>${escapeHtml(record.department)} · ${escapeHtml(record.shift)}</td></tr>
-          <tr><td style="padding: 6px 0; font-weight: bold;">ชั่วโมงการนอน:</td><td>${Number(record.sleepHours).toFixed(1)} ชม.</td></tr>
-          <tr><td style="padding: 6px 0; font-weight: bold;">ปฏิกิริยาเฉลี่ย:</td><td>${Math.round(Number(record.avgReactionMs))} ms</td></tr>
-          <tr><td style="padding: 6px 0; font-weight: bold;">ดัชนีความเหนื่อยล้า:</td><td><strong>${Math.round(Number(record.fatigueScore))} / 100</strong></td></tr>
-          <tr><td style="padding: 6px 0; font-weight: bold;">หมายเหตุ:</td><td>${escapeHtml(record.notes)}</td></tr>
-        </table>
-        <div style="margin-top: 16px; padding: 14px; background: #FCE38A; border: 2px solid #0f172a; border-radius: 8px;">
-          <div style="font-weight: bold; margin-bottom: 8px;">คำแนะนำความปลอดภัยเร่งด่วน:</div>
-          <ul style="margin: 0; padding-left: 18px; font-size: 13px;">${recItems}</ul>
-        </div>
-        <p style="margin-top: 16px; font-size: 12px; color: #475569;">เวลาที่บันทึก: ${escapeHtml(record.timestamp)}</p>
-      </div>
-    </div>
-  `.trim();
-
-  return { subject, html };
-}
-
-function buildRawMimeMessage(toEmail: string, subject: string, htmlBody: string): string {
-  const encodedSubject = `=?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`;
-  const encodedBody = Buffer.from(htmlBody, 'utf-8').toString('base64');
-  const mime = [
-    `To: ${toEmail}`,
-    `Subject: ${encodedSubject}`,
-    'MIME-Version: 1.0',
-    'Content-Type: text/html; charset="UTF-8"',
-    'Content-Transfer-Encoding: base64',
-    '',
-    encodedBody,
-  ].join('\r\n');
-
-  return base64UrlEncode(mime);
-}
-
-async function sendFailEmailViaServerFallback(
-  toEmail: string,
-  record: StoredAssessment,
-  recommendations: string[]
-): Promise<{ sent: boolean; channel?: 'resend' | 'webhook' }> {
-  const { subject, html } = buildFailAlertEmailContent(record, recommendations);
-  const resendKey = process.env.RESEND_API_KEY?.trim();
-  const fromEmail =
-    process.env.RESEND_FROM_EMAIL?.trim() || 'Fit2Shift Safety <onboarding@resend.dev>';
-  const webhookUrl = process.env.GOOGLE_APPS_SCRIPT_WEBHOOK_URL?.trim();
-
-  if (resendKey) {
-    try {
-      const resendRes = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${resendKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: fromEmail,
-          to: [toEmail],
-          subject,
-          html,
-        }),
-      });
-      if (resendRes.ok) {
-        return { sent: true, channel: 'resend' };
-      }
-    } catch {
-      // Fallback below
-    }
-  }
-
-  if (webhookUrl) {
-    try {
-      const hookRes = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'FAIL_ALERT',
-          toEmail,
-          subject,
-          html,
-          record,
-          recommendations,
-        }),
-      });
-      if (hookRes.ok) {
-        return { sent: true, channel: 'webhook' };
-      }
-    } catch {
-      // Ignore network fallback errors
-    }
-  }
-
-  return { sent: false };
-}
-
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', service: 'fit2shift-api' });
-  });
-
-  app.get('/api/alerts/config', (_req: Request, res: Response) => {
-    res.json({
-      defaultAlertEmail: DEFAULT_ALERT_EMAIL,
-      serverEmailEnabled: Boolean(
-        process.env.RESEND_API_KEY?.trim() || process.env.GOOGLE_APPS_SCRIPT_WEBHOOK_URL?.trim()
-      ),
-    });
-  });
-
-  // Send safety FAIL alert email via Gmail API (with user Bearer token) or server email fallback
-  app.post('/api/alerts/email', async (req: Request, res: Response) => {
-    const token = extractBearerToken(req);
-    const toEmail =
-      typeof req.body?.toEmail === 'string' && req.body.toEmail.includes('@')
-        ? req.body.toEmail.trim()
-        : DEFAULT_ALERT_EMAIL;
-    const record = req.body?.record;
-    const recommendations: string[] = Array.isArray(req.body?.recommendations)
-      ? req.body.recommendations.map(String)
-      : [];
-
-    if (!record?.employeeId) {
-      res.status(400).json({ error: 'ข้อมูลผลการประเมินไม่ครบถ้วนสำหรับการส่งอีเมลแจ้งเตือน' });
-      return;
-    }
-
-    const { subject, html } = buildFailAlertEmailContent(record, recommendations);
-
-    if (token) {
-      try {
-        const raw = buildRawMimeMessage(toEmail, subject, html);
-        const gmailRes = await fetch(GMAIL_SEND_ENDPOINT, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ raw }),
-        });
-        const gmailData = await parseGoogleResponse(gmailRes);
-        if (!gmailRes.ok) {
-          res.status(gmailRes.status).json({
-            error:
-              gmailData?.error?.message ||
-              'ไม่สามารถส่งอีเมลแจ้งเตือนผ่าน Gmail ได้ โปรดตรวจสอบสิทธิ์การใช้งาน',
-          });
-          return;
-        }
-        res.json({
-          sent: true,
-          channel: 'gmail',
-          recipient: toEmail,
-          messageId: gmailData.id,
-        });
-        return;
-      } catch (err: unknown) {
-        const message =
-          err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างส่งอีเมลผ่าน Gmail';
-        res.status(500).json({ error: message });
-        return;
-      }
-    }
-
-    const fallback = await sendFailEmailViaServerFallback(toEmail, record, recommendations);
-    if (fallback.sent) {
-      res.json({
-        sent: true,
-        channel: fallback.channel,
-        recipient: toEmail,
-      });
-      return;
-    }
-
-    res.status(401).json({
-      error: 'กรุณายืนยันสิทธิ์บัญชี Google (Gmail) เพื่ออนุญาตให้ส่งอีเมลแจ้งเตือนไปยังอีเมลฐานข้อมูล',
-    });
   });
 
   // Save assessment persistently on the backend without requiring Gmail sign-in
@@ -488,24 +273,7 @@ async function startServer() {
       existing.push(record);
       writeStoredAssessments(existing);
 
-      let emailAlertSent = false;
-      if (record.status === 'FAIL') {
-        const recommendations: string[] = Array.isArray(req.body?.recommendations)
-          ? req.body.recommendations.map(String)
-          : [];
-        const alertEmail =
-          typeof req.body?.alertEmail === 'string' && req.body.alertEmail.includes('@')
-            ? req.body.alertEmail.trim()
-            : DEFAULT_ALERT_EMAIL;
-        const emailResult = await sendFailEmailViaServerFallback(
-          alertEmail,
-          record,
-          recommendations
-        );
-        emailAlertSent = emailResult.sent;
-      }
-
-      res.status(201).json({ success: true, record, emailAlertSent });
+      res.status(201).json({ success: true, record });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'ไม่สามารถบันทึกข้อมูลลงเซิร์ฟเวอร์ได้';
       res.status(500).json({ error: message });

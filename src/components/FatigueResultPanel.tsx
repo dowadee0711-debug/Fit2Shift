@@ -2,7 +2,6 @@ import React from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
-  Mail,
   OctagonAlert,
   RotateCcw,
   Send,
@@ -14,17 +13,11 @@ interface FatigueResultPanelProps {
   evaluation: ReadinessEvaluation;
   notes: string;
   onNotesChange: (notes: string) => void;
-  alertEmail: string;
-  onAlertEmailChange: (email: string) => void;
   onSubmitAssessment: () => void;
-  onRequestSendAlertEmail: () => void;
   onResetAssessment: () => void;
   submitting: boolean;
-  sendingAlert: boolean;
   submitSuccess: string | null;
   submitError: string | null;
-  alertSuccess: string | null;
-  alertError: string | null;
   isGoogleAuthed: boolean;
   onGoogleLogin: () => void;
   isGoogleLoggingIn: boolean;
@@ -34,17 +27,11 @@ export const FatigueResultPanel: React.FC<FatigueResultPanelProps> = ({
   evaluation,
   notes,
   onNotesChange,
-  alertEmail,
-  onAlertEmailChange,
   onSubmitAssessment,
-  onRequestSendAlertEmail,
   onResetAssessment,
   submitting,
-  sendingAlert,
   submitSuccess,
   submitError,
-  alertSuccess,
-  alertError,
   isGoogleAuthed,
   onGoogleLogin,
   isGoogleLoggingIn,
@@ -118,7 +105,7 @@ export const FatigueResultPanel: React.FC<FatigueResultPanelProps> = ({
           </div>
         </div>
 
-        {/* Right: Instant PASS/FAIL Status + Warning Recommendations + Save */}
+        {/* Right: Instant PASS/FAIL Status + Save */}
         <div className="flex flex-col justify-between gap-4 lg:col-span-7">
           {/* Instant Pass/Fail Status Banner */}
           <div
@@ -159,7 +146,7 @@ export const FatigueResultPanel: React.FC<FatigueResultPanelProps> = ({
             </div>
           </div>
 
-          {/* Urgent Safety Recommendations & Email Alert Panel when FAIL */}
+          {/* Urgent Safety Recommendations when FAIL (without email alert UI) */}
           {isFailReady && (
             <div className="rounded-xl border-2 border-slate-950 bg-[#FCE38A] p-4 text-slate-950">
               <div className="flex items-center gap-2 font-display text-base font-extrabold">
@@ -171,48 +158,10 @@ export const FatigueResultPanel: React.FC<FatigueResultPanelProps> = ({
                   <li key={idx}>• {rec}</li>
                 ))}
               </ul>
-
-              <div className="mt-4 border-t-2 border-slate-900/15 pt-3">
-                <label
-                  htmlFor="alert-recipient-email"
-                  className="block text-xs font-extrabold text-slate-900"
-                >
-                  อีเมลฐานข้อมูลสำหรับแจ้งเตือนอัตโนมัติ
-                </label>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2.5">
-                  <input
-                    id="alert-recipient-email"
-                    type="email"
-                    value={alertEmail}
-                    onChange={(e) => onAlertEmailChange(e.target.value)}
-                    placeholder="nutthawadee.kae@dome.tu.ac.th"
-                    className="h-11 min-w-[220px] flex-1 rounded-xl border-2 border-slate-900 bg-white px-3.5 font-mono text-xs font-bold text-slate-950 focus:border-[#F38181] focus:outline-none"
-                  />
-                  {isGoogleAuthed ? (
-                    <button
-                      type="button"
-                      onClick={onRequestSendAlertEmail}
-                      disabled={sendingAlert || !alertEmail.includes('@')}
-                      className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border-2 border-slate-950 bg-[#F38181] px-4 py-2 text-xs font-extrabold text-slate-950 transition-colors hover:bg-white disabled:opacity-50 whitespace-nowrap shrink-0"
-                    >
-                      <Mail className="h-4 w-4 stroke-[2.5]" />
-                      <span>
-                        {sendingAlert ? 'กำลังส่งอีเมล...' : 'ส่งอีเมลแจ้งเตือนทันที'}
-                      </span>
-                    </button>
-                  ) : (
-                    <GoogleSignInButton
-                      onClick={onGoogleLogin}
-                      loading={isGoogleLoggingIn}
-                      label="Sign in with Google เพื่อส่งอีเมล"
-                    />
-                  )}
-                </div>
-              </div>
             </div>
           )}
 
-          {/* Notes + Action Controls */}
+          {/* Notes + Save Action Controls */}
           <div className="flex flex-col gap-3">
             <div>
               <label
@@ -272,28 +221,10 @@ export const FatigueResultPanel: React.FC<FatigueResultPanelProps> = ({
               </div>
             )}
 
-            {alertSuccess && (
-              <div
-                role="status"
-                className="rounded-xl border-2 border-slate-950 bg-[#95E1D3] px-4 py-3 text-sm font-bold text-slate-950"
-              >
-                {alertSuccess}
-              </div>
-            )}
-
-            {alertError && (
-              <div
-                role="alert"
-                className="rounded-xl border-2 border-slate-950 bg-[#F38181] px-4 py-3 text-sm font-bold text-slate-950"
-              >
-                {alertError}
-              </div>
-            )}
-
-            {!isGoogleAuthed && !isFailReady && (
+            {!isGoogleAuthed && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-900/25 bg-[#EAFFD0]/45 px-3.5 py-2.5">
                 <span className="text-xs font-semibold text-slate-700">
-                  บันทึกข้อมูลลงระบบอัตโนมัติได้ทันที (ซิงค์ Google Sheets / Gmail เพิ่มเติมได้ตามต้องการ)
+                  บันทึกข้อมูลลงระบบอัตโนมัติได้ทันที (ซิงค์เข้า Google Sheets ส่วนตัวเพิ่มเติมได้ตามต้องการ)
                 </span>
                 <GoogleSignInButton
                   onClick={onGoogleLogin}

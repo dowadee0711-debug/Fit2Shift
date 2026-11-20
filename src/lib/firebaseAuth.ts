@@ -10,7 +10,6 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
-  'https://www.googleapis.com/auth/gmail.send',
 ];
 
 const app = initializeApp(firebaseConfig);
@@ -50,7 +49,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-      throw new Error('ไม่สามารถรับสิทธิ์เข้าถึง Google Sheets และ Gmail ได้ กรุณาลองใหม่อีกครั้ง');
+      throw new Error('ไม่สามารถรับสิทธิ์เข้าถึง Google Sheets ได้ กรุณาลองใหม่อีกครั้ง');
     }
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };

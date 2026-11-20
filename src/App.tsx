@@ -5,7 +5,6 @@ import { LoginScreen } from './components/LoginScreen';
 import { ReactionTestArena } from './components/ReactionTestArena';
 import { SleepAndChecksPanel } from './components/SleepAndChecksPanel';
 import { FatigueResultPanel } from './components/FatigueResultPanel';
-import { ConfirmModal } from './components/ConfirmModal';
 import { evaluateReadiness } from './lib/fatigueCalculator';
 import {
   getAccessToken,
@@ -36,12 +35,6 @@ interface BackendAssessmentRecord {
   syncedToSheet: boolean;
 }
 
-interface PendingEmailAlert {
-  toEmail: string;
-  record: Omit<BackendAssessmentRecord, 'id' | 'syncedToSheet'>;
-  recommendations: string[];
-}
-
 function loadSavedSheetConnection(): SheetConnection | null {
   try {
     const raw = window.localStorage.getItem(SHEET_META_STORAGE_KEY);
@@ -59,10 +52,9 @@ function loadSavedSheetConnection(): SheetConnection | null {
 export default function App() {
   const [employeeSession, setEmployeeSession] = useState<EmployeeSession | null>(null);
 
-  // Optional Google Workspace Auth state (access token kept strictly in memory via firebaseAuth.ts)
+  // Optional Google Workspace Auth state for Google Sheets sync (token kept in memory)
   const [isGoogleAuthed, setIsGoogleAuthed] = useState(false);
   const [isGoogleLoggingIn, setIsGoogleLoggingIn] = useState(false);
-  const [alertEmail, setAlertEmail] = useState('nutthawadee.kae@dome.tu.ac.th');
 
   // Background Google Sheet database metadata
   const [sheetConnection, setSheetConnection] = useState<SheetConnection | null>(() =>
@@ -79,35 +71,15 @@ export default function App() {
   });
   const [notes, setNotes] = useState('');
 
-  // Submission & Alert state
+  // Submission state
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [sendingAlert, setSendingAlert] = useState(false);
-  const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
-  const [alertError, setAlertError] = useState<string | null>(null);
-  const [pendingEmailAlert, setPendingEmailAlert] = useState<PendingEmailAlert | null>(null);
-
-  useEffect(() => {
-    fetch('/api/alerts/config')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.defaultAlertEmail) {
-          setAlertEmail((prev) => prev || String(data.defaultAlertEmail));
-        }
-      })
-      .catch(() => {
-        // Keep default email
-      });
-  }, []);
 
   useEffect(() => {
     const unsubscribe = initAuth(
-      (user) => {
+      () => {
         setIsGoogleAuthed(true);
-        if (user.email) {
-          setAlertEmail(user.email);
-        }
       },
       () => {
         setIsGoogleAuthed(false);
@@ -235,35 +207,10 @@ export default function App() {
   const handleGoogleLogin = async () => {
     setIsGoogleLoggingIn(true);
     setSubmitError(null);
-    setAlertError(null);
     try {
       const result = await googleSignIn();
       setIsGoogleAuthed(true);
-      const targetEmail = result.user.email || alertEmail;
-      if (result.user.email) {
-        setAlertEmail(result.user.email);
-      }
       await syncPendingRecordsToSheet(result.accessToken);
-
-      if (employeeSession && evaluation.readyToSubmit && evaluation.status === 'FAIL') {
-        setPendingEmailAlert({
-          toEmail: targetEmail.trim() || 'nutthawadee.kae@dome.tu.ac.th',
-          record: {
-            timestamp: new Date().toISOString(),
-            employeeId: employeeSession.employeeId,
-            employeeName: employeeSession.employeeName,
-            department: employeeSession.department,
-            shift: employeeSession.shift,
-            sleepHours: evaluation.sleepHours,
-            avgReactionMs: evaluation.avgReactionMs ?? 0,
-            reactionTrials: trialsMs.join(', '),
-            fatigueScore: evaluation.fatigueScore,
-            status: evaluation.status,
-            notes: notes.trim() || evaluation.reasons.join(' | '),
-          },
-          recommendations: evaluation.recommendations,
-        });
-      }
     } catch (err: unknown) {
       setSubmitError(
         err instanceof Error
@@ -286,8 +233,6 @@ export default function App() {
     setNotes('');
     setSubmitSuccess(null);
     setSubmitError(null);
-    setAlertSuccess(null);
-    setAlertError(null);
   };
 
   const handleEmployeeLogin = (session: EmployeeSession) => {
@@ -300,76 +245,6 @@ export default function App() {
     setTrialsMs([]);
     setSubmitSuccess(null);
     setSubmitError(null);
-    setAlertSuccess(null);
-    setAlertError(null);
-  };
-
-  const buildCurrentAlertPayload = useCallback((): PendingEmailAlert | null => {
-    if (!employeeSession) return null;
-    return {
-      toEmail: alertEmail.trim() || 'nutthawadee.kae@dome.tu.ac.th',
-      record: {
-        timestamp: new Date().toISOString(),
-        employeeId: employeeSession.employeeId,
-        employeeName: employeeSession.employeeName,
-        department: employeeSession.department,
-        shift: employeeSession.shift,
-        sleepHours: evaluation.sleepHours,
-        avgReactionMs: evaluation.avgReactionMs ?? 0,
-        reactionTrials: trialsMs.join(', '),
-        fatigueScore: evaluation.fatigueScore,
-        status: evaluation.status,
-        notes: notes.trim() || evaluation.reasons.join(' | '),
-      },
-      recommendations: evaluation.recommendations,
-    };
-  }, [employeeSession, alertEmail, evaluation, trialsMs, notes]);
-
-  const handleRequestSendAlertEmail = () => {
-    const alertPayload = buildCurrentAlertPayload();
-    if (!alertPayload) return;
-    setAlertError(null);
-    setAlertSuccess(null);
-    setPendingEmailAlert(alertPayload);
-  };
-
-  const handleConfirmSendAlertEmail = async () => {
-    if (!pendingEmailAlert) return;
-    const token = getAccessToken();
-    setSendingAlert(true);
-    setAlertError(null);
-    setAlertSuccess(null);
-
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-
-      const res = await fetch('/api/alerts/email', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(pendingEmailAlert),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'ไม่สามารถส่งอีเมลแจ้งเตือนได้');
-      }
-
-      setAlertSuccess(
-        `ส่งอีเมลแจ้งเตือนสถานะไม่ผ่านเกณฑ์ไปยัง ${data.recipient || pendingEmailAlert.toEmail} เรียบร้อยแล้ว`
-      );
-      setPendingEmailAlert(null);
-    } catch (err: unknown) {
-      setAlertError(
-        err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างส่งอีเมลแจ้งเตือน'
-      );
-      setPendingEmailAlert(null);
-    } finally {
-      setSendingAlert(false);
-    }
   };
 
   const handleSubmitAssessment = async () => {
@@ -378,8 +253,6 @@ export default function App() {
     setSubmitting(true);
     setSubmitError(null);
     setSubmitSuccess(null);
-    setAlertSuccess(null);
-    setAlertError(null);
 
     const payload = {
       timestamp: new Date().toISOString(),
@@ -393,12 +266,10 @@ export default function App() {
       fatigueScore: evaluation.fatigueScore,
       status: evaluation.status,
       notes: notes.trim() || evaluation.reasons.join(' | '),
-      recommendations: evaluation.recommendations,
-      alertEmail: alertEmail.trim() || 'nutthawadee.kae@dome.tu.ac.th',
     };
 
     try {
-      // 1. Always persist immediately to backend database without requiring Gmail login
+      // Persist immediately to backend database without requiring Google login
       const saveRes = await fetch('/api/assessments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -409,7 +280,7 @@ export default function App() {
         throw new Error(saveData.error || 'บันทึกข้อมูลไม่สำเร็จ');
       }
 
-      // 2. If user also signed in with Google in this browser session, flush to Google Sheets automatically
+      // If Google Sheets auth is active in this session, also sync to Google Sheets automatically
       const token = getAccessToken();
       if (token && !saveData.record?.syncedToSheet) {
         try {
@@ -422,38 +293,6 @@ export default function App() {
       setSubmitSuccess(
         `บันทึกผลการประเมินของรหัส ${employeeSession.employeeId} (${evaluation.status === 'PASS' ? 'ผ่านเกณฑ์' : 'ไม่ผ่านเกณฑ์'}) ลงระบบเรียบร้อยแล้ว`
       );
-
-      // 3. On FAIL status: notify database email
-      if (evaluation.status === 'FAIL') {
-        if (saveData.emailAlertSent) {
-          setAlertSuccess(
-            `ระบบส่งอีเมลแจ้งเตือนสถานะไม่ผ่านเกณฑ์ไปยัง ${payload.alertEmail} เรียบร้อยแล้ว`
-          );
-        } else if (token) {
-          // Require explicit confirmation before sending email on the user's behalf via Gmail API
-          setPendingEmailAlert({
-            toEmail: payload.alertEmail,
-            record: {
-              timestamp: payload.timestamp,
-              employeeId: payload.employeeId,
-              employeeName: payload.employeeName,
-              department: payload.department,
-              shift: payload.shift,
-              sleepHours: payload.sleepHours,
-              avgReactionMs: payload.avgReactionMs ?? 0,
-              reactionTrials: payload.reactionTrials,
-              fatigueScore: payload.fatigueScore,
-              status: payload.status,
-              notes: payload.notes,
-            },
-            recommendations: evaluation.recommendations,
-          });
-        } else {
-          setAlertError(
-            `บันทึกข้อมูลแล้ว แต่ยังไม่ได้ส่งอีเมลแจ้งเตือนไปที่ ${payload.alertEmail} — กรุณากด "Sign in with Google เพื่อส่งอีเมล" หรือตั้งค่า RESEND_API_KEY / GOOGLE_APPS_SCRIPT_WEBHOOK_URL ในระบบหลังบ้านเพื่อให้ส่งอัตโนมัติ`
-          );
-        }
-      }
     } catch (err: unknown) {
       setSubmitError(
         err instanceof Error ? err.message : 'เกิดข้อผิดพลาดระหว่างบันทึกข้อมูล'
@@ -516,17 +355,11 @@ export default function App() {
                 evaluation={evaluation}
                 notes={notes}
                 onNotesChange={setNotes}
-                alertEmail={alertEmail}
-                onAlertEmailChange={setAlertEmail}
                 onSubmitAssessment={handleSubmitAssessment}
-                onRequestSendAlertEmail={handleRequestSendAlertEmail}
                 onResetAssessment={handleResetAssessment}
                 submitting={submitting}
-                sendingAlert={sendingAlert}
                 submitSuccess={submitSuccess}
                 submitError={submitError}
-                alertSuccess={alertSuccess}
-                alertError={alertError}
                 isGoogleAuthed={isGoogleAuthed}
                 onGoogleLogin={handleGoogleLogin}
                 isGoogleLoggingIn={isGoogleLoggingIn}
@@ -543,25 +376,6 @@ export default function App() {
           </section>
         )}
       </main>
-
-      {/* Explicit Confirmation Modal before sending alert email via Gmail API */}
-      <ConfirmModal
-        open={pendingEmailAlert !== null}
-        title="ยืนยันการส่งอีเมลแจ้งเตือนสถานะไม่ผ่านเกณฑ์ (FAIL)?"
-        description={
-          pendingEmailAlert
-            ? `ระบบจะส่งอีเมลแจ้งเตือนผลการประเมินของรหัส ${pendingEmailAlert.record.employeeId} (${pendingEmailAlert.record.employeeName}) คะแนนความเหนื่อยล้า ${pendingEmailAlert.record.fatigueScore}/100 พร้อมคำแนะนำความปลอดภัยไปยัง ${pendingEmailAlert.toEmail}`
-            : ''
-        }
-        confirmLabel="ยืนยันส่งอีเมลแจ้งเตือน"
-        cancelLabel="ยกเลิก"
-        destructive={false}
-        loading={sendingAlert}
-        onConfirm={handleConfirmSendAlertEmail}
-        onCancel={() => {
-          if (!sendingAlert) setPendingEmailAlert(null);
-        }}
-      />
     </div>
   );
 }
